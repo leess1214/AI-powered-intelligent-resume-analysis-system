@@ -120,3 +120,6 @@ python main.py
 const API_URL = "[http://127.0.0.1:8000/api/analyze](http://127.0.0.1:8000/api/analyze)";
 ```
 3.双击打开 index.html 即可开始测试。
+### 项目截图(Screenshots)
+<img width="2560" height="1229" alt="image" src="https://github.com/user-attachments/assets/fad7c43e-d2fa-40f5-90fe-612c8d18efe9" />
+
