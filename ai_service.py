@@ -1,89 +1,106 @@
+# ai_service.py
 import json
-from config import settings
-# 如果使用阿里云通义千问，由于它兼容 OpenAI SDK，我们可以直接用 openai 库
-# 只需修改 base_url 即可 (阿里云通常是 https://dashscope.aliyuncs.com/compatible-mode/v1)
 from openai import OpenAI
-
-client = None
-if not settings.MOCK_MODE:
-    client = OpenAI(
-        api_key=settings.API_KEY,
-        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"
-        # 阿里云 Endpoint 示例
-    )
+from config import settings
 
 
 def analyze_resume(resume_text: str, job_description: str = None):
     """
-    调用 AI 对简历进行分析。
+    调用阿里云通义千问进行简历分析
     """
-    if settings.MOCK_MODE:
+    # 1. 如果还在 Mock 模式或者没有 Key，返回假数据（防止报错）
+    if settings.MOCK_MODE or not settings.API_KEY:
+        print("警告：正在使用 Mock 数据，请检查 API_KEY 是否配置")
         return _mock_response(job_description is not None)
 
-    # 1. 构建 Prompt
-    # 基础任务：提取信息
-    system_instruction = """
-    你是一个资深的招聘专家和简历解析助手。
-    你的任务是提取简历关键信息，并输出为严格的 JSON 格式。
-    不要输出任何 Markdown 标记（如 ```json），只输出纯 JSON 字符串。
+    # 2. 初始化客户端 (使用 OpenAI SDK 连接阿里云)
+    client = OpenAI(
+        api_key=settings.API_KEY,
+        base_url=settings.BASE_URL
+    )
+
+    # 3. 构造 System Prompt (人设)
+    system_prompt = """
+    你是一个拥有20年经验的资深技术招聘专家。
+    你的任务是精准提取简历信息，并根据职位描述(JD)进行客观评分。
+
+    【重要指令】
+    1. 必须返回严格的 JSON 格式数据。
+    2. 不要包含 markdown 标记（如 ```json），只返回纯文本 JSON。
+    3. 如果简历中找不到某项信息，该字段填 "未提及"。
     """
 
+    # 4. 构造 User Prompt (任务)
+    # 为了节省 Token 和防止上下文超长，截取简历前 3000 字
     user_prompt = f"""
-    简历内容如下：
-    {resume_text[:4000]} 
+    请分析以下简历内容：
 
-    请提取以下字段：
-    - basic_info: {{ name, phone, email, university, degree }}
-    - skills: [列出技能关键词]
-    - summary: 一句话总结该候选人的特点
+    【简历文本开始】
+    {resume_text[:3000]}
+    【简历文本结束】
+
+    请输出以下 JSON 结构的数据：
+    {{
+        "basic_info": {{
+            "name": "姓名",
+            "phone": "电话",
+            "email": "邮箱",
+            "education": "最高学历/毕业院校",
+            "years_of_experience": "工作年限(数字或估算)"
+        }},
+        "skills": ["技能1", "技能2", "技能3"],
+        "summary": "50字以内的候选人能力总结"
+    }}
     """
 
-    # 进阶任务：如果有职位描述，增加评分逻辑
+    # 5. 如果有 JD，增加评分逻辑
     if job_description:
         user_prompt += f"""
 
-        同时，请根据以下职位描述对简历进行打分：
-        职位描述：{job_description[:2000]}
+        【职位描述 (JD)】
+        {job_description[:1500]}
 
-        请在 JSON 中额外增加以下字段：
-        - match_score: (0-100的整数)
-        - match_analysis: (简短的匹配度分析，说明加分项和减分项)
+        请在刚才的 JSON 中额外增加以下字段：
+        "match_score": (0-100之间的整数评分),
+        "match_analysis": "简短评价人岗匹配度，指出优势和不足(100字以内)"
         """
 
     try:
+        # 6. 发起调用
         response = client.chat.completions.create(
             model=settings.MODEL_NAME,
             messages=[
-                {"role": "system", "content": system_instruction},
-                {"role": "user", "content": user_prompt}
+                {'role': 'system', 'content': system_prompt},
+                {'role': 'user', 'content': user_prompt}
             ],
-            temperature=0.1,  # 低温度保证输出稳定
-            response_format={"type": "json_object"}  # 强制 JSON (部分模型支持)
+            temperature=0.1  # 温度设低一点，让输出更稳定
         )
+
+        # 7. 解析结果
         content = response.choices[0].message.content
+        # 清洗一下可能存在的 markdown 符号
+        content = content.replace("```json", "").replace("```", "").strip()
+
         return json.loads(content)
+
     except Exception as e:
         print(f"AI 调用失败: {e}")
-        return {"error": "AI分析服务暂时不可用"}
+        # 如果真挂了，返回一个带错误信息的 JSON，而不是让程序崩溃
+        return {
+            "basic_info": {"name": "AI解析失败"},
+            "summary": f"服务暂时不可用: {str(e)}",
+            "skills": []
+        }
 
 
 def _mock_response(include_score=False):
-    """
-    模拟数据，用于开发测试
-    """
+    # 保留 mock 函数作为备用
     data = {
-        "basic_info": {
-            "name": "张三",
-            "phone": "13800138000",
-            "email": "zhangsan@example.com",
-            "university": "某知名大学",
-            "degree": "硕士"
-        },
-        "skills": ["Python", "FastAPI", "Machine Learning", "Redis"],
-        "summary": "具备扎实数学基础和后端开发能力的应届硕士生。"
+        "basic_info": {"name": "测试用户(Mock)", "email": "test@mock.com"},
+        "skills": ["Mock Skill 1", "Mock Skill 2"],
+        "summary": "这是本地测试数据，说明 API Key 未生效。"
     }
     if include_score:
-        data["match_score"] = 85
-        data[
-            "match_analysis"] = "候选人技能栈与职位高度匹配，特别是在Python后端方面。但在实际高并发项目经验上稍显不足。"
+        data["match_score"] = 88
+        data["match_analysis"] = "测试模式匹配分析。"
     return data
