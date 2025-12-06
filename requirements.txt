@@ -5,3 +5,4 @@ pdfplumber
 openai
 pydantic
 python-dotenv
+redis
